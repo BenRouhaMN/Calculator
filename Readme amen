@@ -1,0 +1,23 @@
+CREATE OR REPLACE PROCEDURE call_web_service(p_url IN VARCHAR2) IS
+  req UTL_HTTP.REQ;
+  resp UTL_HTTP.RESP;
+  url VARCHAR2(4000) := p_url;
+  content VARCHAR2(4000);
+  err_msg VARCHAR2(4000);
+BEGIN
+  req := UTL_HTTP.BEGIN_REQUEST(url, 'GET');
+  resp := UTL_HTTP.GET_RESPONSE(req);
+  LOOP
+    UTL_HTTP.READ_TEXT(resp, content);
+    DBMS_OUTPUT.PUT_LINE(content);
+  END LOOP;
+  UTL_HTTP.END_RESPONSE(resp);
+EXCEPTION
+  WHEN UTL_HTTP.END_OF_BODY THEN
+    UTL_HTTP.END_RESPONSE(resp);
+  WHEN OTHERS THEN
+    err_msg := 'Error calling web service: ' || UTL_HTTP.GET_DETAILED_SQLERRM;
+    DBMS_OUTPUT.PUT_LINE(err_msg);
+END;
+
+
