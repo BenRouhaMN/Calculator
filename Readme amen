@@ -1,23 +1,24 @@
-CREATE OR REPLACE PROCEDURE call_web_service(p_url IN VARCHAR2) IS
+CREATE OR REPLACE PROCEDURE call_web_service(
+  p_url IN VARCHAR2,
+  p_content_type IN VARCHAR2,
+  p_timeout IN NUMBER,
+  p_response OUT CLOB
+) AS
   req UTL_HTTP.REQ;
   resp UTL_HTTP.RESP;
-  url VARCHAR2(4000) := p_url;
-  content VARCHAR2(4000);
-  err_msg VARCHAR2(4000);
 BEGIN
-  req := UTL_HTTP.BEGIN_REQUEST(url, 'GET');
+  req := UTL_HTTP.BEGIN_REQUEST(p_url, 'GET', 'HTTP/1.1');
+  UTL_HTTP.SET_HEADER(req, 'Content-Type', p_content_type);
+  UTL_HTTP.SET_TRANSFER_TIMEOUT(p_timeout);
   resp := UTL_HTTP.GET_RESPONSE(req);
-  LOOP
-    UTL_HTTP.READ_TEXT(resp, content);
-    DBMS_OUTPUT.PUT_LINE(content);
-  END LOOP;
-  UTL_HTTP.END_RESPONSE(resp);
-EXCEPTION
-  WHEN UTL_HTTP.END_OF_BODY THEN
-    UTL_HTTP.END_RESPONSE(resp);
-  WHEN OTHERS THEN
-    err_msg := 'Error calling web service: ' || UTL_HTTP.GET_DETAILED_SQLERRM;
-    DBMS_OUTPUT.PUT_LINE(err_msg);
+  DBMS_LOB.CREATETEMPORARY(p_response, TRUE);
+  BEGIN
+    LOOP
+      UTL_HTTP.READ_TEXT(resp, p_response, 32767);
+    END LOOP;
+  EXCEPTION
+    WHEN UTL_HTTP.END_OF_BODY THEN
+      UTL_HTTP.END_RESPONSE(resp);
+  END;
 END;
-
 
