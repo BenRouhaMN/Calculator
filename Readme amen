@@ -63,3 +63,29 @@ BEGIN
 END;
 /
 
+
+
+BEGIN
+  DBMS_SCHEDULER.CREATE_JOB(
+    job_name => 'curl_job',
+    job_type => 'executable',
+    job_action => '/usr/bin/curl http://example.com',
+    number_of_arguments => 0,
+    enabled => FALSE,
+    auto_drop => FALSE,
+    comments => 'Job to execute curl command'
+  );
+END;
+/
+
+
+
+CREATE OR REPLACE TRIGGER trigger_name
+AFTER INSERT ON table_name
+FOR EACH ROW
+BEGIN
+   DBMS_SCHEDULER.ENABLE('curl_job');
+   DBMS_SCHEDULER.RUN_JOB('curl_job');
+END;
+/
+
