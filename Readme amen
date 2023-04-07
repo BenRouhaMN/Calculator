@@ -22,3 +22,44 @@ BEGIN
   END;
 END;
 
+
+
+CREATE OR REPLACE PROCEDURE call_java_ws (p_url IN VARCHAR2) AS
+   req UTL_HTTP.REQ;
+   res UTL_HTTP.RESP;
+   buffer VARCHAR2(32767);
+   resp_text VARCHAR2(32767);
+BEGIN
+   req := UTL_HTTP.begin_request(p_url, 'GET', 'HTTP/1.1');
+   UTL_HTTP.set_header(req, 'User-Agent', 'Mozilla/4.0');
+   UTL_HTTP.set_header(req, 'Accept-Charset', 'UTF-8');
+   UTL_HTTP.set_header(req, 'Content-Type', 'application/x-www-form-urlencoded');
+   UTL_HTTP.set_header(req, 'Content-Length', length(p_url));
+   
+   -- Disable SSL check
+   UTL_HTTP.set_dh_trusted_cert('SSL', FALSE);
+
+   res := UTL_HTTP.get_response(req);
+   LOOP
+      UTL_HTTP.read_text(res, buffer, 32766);
+      resp_text := resp_text || buffer;
+   END LOOP;
+   UTL_HTTP.end_response(res);
+   dbms_output.put_line(resp_text);
+END;
+/
+
+
+CREATE OR REPLACE FUNCTION execute_curl(p_url VARCHAR2) RETURN VARCHAR2
+IS
+   l_command VARCHAR2(4000);
+   l_output  VARCHAR2(4000);
+BEGIN
+   l_command := 'curl ' || p_url;
+   l_output := UTL_TCP.OPEN_CONNECTION('localhost', 80);
+   UTL_TCP.WRITE_RAW(l_output, UTL_RAW.CAST_TO_RAW(l_command));
+   UTL_TCP.CLOSE_CONNECTION(l_output);
+   RETURN l_command;
+END;
+/
+
