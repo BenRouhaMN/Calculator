@@ -124,3 +124,42 @@ END;
 
 
 
+
+
+CREATE OR REPLACE TRIGGER my_trigger
+AFTER INSERT OR UPDATE OR DELETE ON my_table
+FOR EACH ROW
+BEGIN
+  -- Your notification logic here
+END;
+
+
+DBMS_AQ.ENQUEUE(
+  queue_name => 'my_queue',
+  enqueue_options => NULL,
+  message_properties => NULL,
+  payload => 'Hello, world!'
+);
+
+OracleConnection conn = (OracleConnection) DriverManager.getConnection(
+  "jdbc:oracle:thin:@//localhost:1521/mydatabase", "username", "password");
+
+OracleAQQueue queue = ((OracleAQNotificationManager) conn.getAQNotificationManager())
+  .getQueue("my_queue");
+
+queue.registerListener(new AQNotificationListener() {
+  @Override
+  public void onAQNotification(AQNotificationEvent event) {
+    // Your notification handling logic here
+  }
+});
+
+// Wait for notifications
+while (true) {
+  conn.commit();
+  Thread.sleep(1000);
+}
+
+
+
+
