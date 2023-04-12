@@ -162,4 +162,33 @@ while (true) {
 
 
 
+CREATE OR REPLACE TRIGGER my_trigger
+AFTER INSERT OR UPDATE OR DELETE ON my_table
+FOR EACH ROW
+DECLARE
+  queue_options DBMS_AQ.enqueue_options_t;
+  message_properties DBMS_AQ.message_properties_t;
+  message_handle RAW(16);
+  message_body VARCHAR2(4000);
+BEGIN
+  -- Build the message body
+  message_body := 'Table ' || :NEW.my_column || ' was ';
+  IF INSERTING THEN
+    message_body := message_body || 'inserted';
+  ELSIF UPDATING THEN
+    message_body := message_body || 'updated';
+  ELSIF DELETING THEN
+    message_body := message_body || 'deleted';
+  END IF;
+  
+  -- Enqueue the message
+  DBMS_AQ.ENQUEUE(
+    queue_name => 'my_queue',
+    enqueue_options => queue_options,
+    message_properties => message_properties,
+    payload => message_body,
+    msgid => message_handle
+  );
+END;
+
 
