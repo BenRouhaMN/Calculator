@@ -191,4 +191,6 @@ BEGIN
   );
 END;
 
+SELECT * FROM dba_objects WHERE object_type = 'PACKAGE' AND object_name = 'DBMS_AQ';
+
 
