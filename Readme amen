@@ -194,3 +194,16 @@ END;
 SELECT * FROM dba_objects WHERE object_type = 'PACKAGE' AND object_name = 'DBMS_AQ';
 
 
+BEGIN
+  DBMS_AQADM.CREATE_QUEUE_TABLE(
+    queue_table => 'my_queue_table',
+    queue_payload_type => 'VARCHAR2(4000)'
+  );
+  DBMS_AQADM.CREATE_QUEUE(
+    queue_name => 'my_queue',
+    queue_table => 'my_queue_table'
+  );
+  DBMS_AQADM.START_QUEUE(
+    queue_name => 'my_queue'
+  );
+END;
