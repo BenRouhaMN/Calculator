@@ -207,3 +207,23 @@ BEGIN
     queue_name => 'my_queue'
   );
 END;
+
+
+
+import { Directive, ElementRef, HostListener } from '@angular/core';
+import { DomSanitizer } from '@angular/platform-browser';
+
+@Directive({
+  selector: '[appInputSanitizer]'
+})
+export class InputSanitizerDirective {
+
+  constructor(private el: ElementRef, private sanitizer: DomSanitizer) { }
+
+  @HostListener('input', ['$event'])
+  onInput(event: any) {
+    const sanitizedValue = this.sanitizer.sanitize(SecurityContext.HTML, event.target.value);
+    this.el.nativeElement.value = sanitizedValue;
+  }
+}
+
