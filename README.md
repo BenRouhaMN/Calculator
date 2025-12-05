@@ -1,31 +1,3 @@
-import org.apache.poi.ss.usermodel.Workbook;
-import org.apache.poi.ss.usermodel.WorkbookFactory;
-import org.junit.Test;
-
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-
-public class TemplateDebugTest {
-
-    @Test
-    public void debugTemplateLoading() throws Exception {
-
-        System.out.println("=== TEMPLATE DEBUG START ===");
-
-        String[] templates = {
-                "/templates/representativeness.xlsx",
-                "/templates/risk.xlsx"
-        };
-
-        for (String path : templates) {
-
-            System.out.println("\nChecking: " + path);
-
-            InputStream is = getClass().getResourceAsStream(path);
-
-            if (is == null) {
-                System.out.println("❌ ERROR: getResourceAsStream returned null");
                 System.out.println("➡ Meaning: File NOT FOUND in the classpath.");
                 continue;
             }
