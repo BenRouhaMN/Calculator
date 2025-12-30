@@ -56,3 +56,16 @@ public void zipIt(String zipFile, String fromFolder) {
         new File(zipFile).delete();
     }
 }
+
+
+private boolean zipContainsRealFile(File zipFile) {
+    try (ZipFile zip = new ZipFile(zipFile)) {
+        return zip.stream()
+                  .anyMatch(entry ->
+                          !entry.isDirectory() && entry.getSize() > 0
+                  );
+    } catch (IOException e) {
+        return false;
+    }
+}
+
