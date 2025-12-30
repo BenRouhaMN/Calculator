@@ -69,3 +69,19 @@ private boolean zipContainsRealFile(File zipFile) {
     }
 }
 
+
+private boolean zipContainsRealFile(File zipFile) {
+    try (ZipFile zip = new ZipFile(zipFile)) {
+        Enumeration<? extends ZipEntry> entries = zip.entries();
+
+        while (entries.hasMoreElements()) {
+            ZipEntry entry = entries.nextElement();
+            if (!entry.isDirectory() && entry.getSize() > 0) {
+                return true;
+            }
+        }
+        return false;
+    } catch (IOException e) {
+        return false;
+    }
+}
