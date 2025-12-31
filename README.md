@@ -1,27 +1,34 @@
-private boolean zipContainsReadableFile(File zipFile) {
-    try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(zipFile)) {
+private void zipInnerZipContent(File zipFile, ZipOutputStream zos) {
+
+    byte[] buffer = new byte[4096];
+
+    try (ZipFile zip = new ZipFile(zipFile)) {
 
         Enumeration<? extends ZipEntry> entries = zip.entries();
 
         while (entries.hasMoreElements()) {
             ZipEntry entry = entries.nextElement();
 
-            // ignorer les dossiers
+            // on ignore les dossiers
             if (entry.isDirectory()) {
                 continue;
             }
 
-            // tenter de lire 1 octet réel
             try (InputStream is = zip.getInputStream(entry)) {
-                if (is.read() != -1) {
-                    return true; // ✅ contenu réel détecté
+
+                ZipEntry newEntry = new ZipEntry(entry.getName());
+                zos.putNextEntry(newEntry);
+
+                int len;
+                while ((len = is.read(buffer)) > 0) {
+                    zos.write(buffer, 0, len);
                 }
+                zos.closeEntry();
             }
         }
-        return false;
 
     } catch (IOException e) {
-        // ZIP corrompu ou illisible
-        return false;
+        // ZIP interne illisible → ignoré volontairement
+        e.printStackTrace();
     }
 }
