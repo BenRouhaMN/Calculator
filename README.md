@@ -1,4 +1,3 @@
-
 # Foundation Project
 # REST API Engineering Standard
 
@@ -22,17 +21,22 @@ Java 21 · Spring Boot 3.x · Spring Security · Resilience4j · Micrometer · O
 
 ## 1.1 What REST Is
 
-REST (Representational State Transfer) is an architectural style for distributed systems.
+REST (Representational State Transfer) is an architectural style for distributed systems defined by Roy Fielding.
 
-It defines constraints that ensure:
+REST is not:
+- Simply using HTTP
+- Simply returning JSON
+- Simply exposing controllers
 
-- Scalability  
-- Evolvability  
-- Loose coupling  
-- Clear separation of concerns  
-- Operational stability  
+REST is a set of architectural constraints that ensure:
 
-REST focuses on system behavior under scale and change — not simply on HTTP or JSON.
+- Horizontal scalability
+- Loose coupling
+- Evolvability over time
+- Clear separation of concerns
+- Predictable behavior under failure
+
+REST optimizes long-term system stability over short-term implementation speed.
 
 ---
 
@@ -40,19 +44,18 @@ REST focuses on system behavior under scale and change — not simply on HTTP or
 
 ### 1.2.1 Client–Server Separation
 
-Clients and servers evolve independently.
+The client and server must evolve independently.
 
-Backend services must not:
-
-- Contain UI-specific logic  
-- Depend on frontend implementation details  
-- Break contracts when UI changes  
+Backend services MUST:
+- Not embed UI logic
+- Not depend on specific frontend behavior
+- Not break contracts due to UI changes
 
 ---
 
 ### 1.2.2 Statelessness
 
-Each request must contain all required information.
+Each request must contain all necessary information.
 
 The server MUST NOT store session state between requests.
 
@@ -63,12 +66,11 @@ Authorization: Bearer <JWT>
 ```
 
 Forbidden:
+- HTTP sessions
+- Sticky sessions
+- In-memory per-user state
 
-- HTTP sessions  
-- Sticky sessions  
-- In-memory per-user state  
-
-Statelessness enables horizontal scaling and resilience.
+Statelessness enables horizontal scaling and simplifies failure recovery.
 
 ---
 
@@ -88,18 +90,21 @@ Mutable endpoints MUST disable caching:
 Cache-Control: no-store
 ```
 
+Improper caching configuration may cause stale reads or data leaks.
+
 ---
 
 ### 1.2.4 Uniform Interface
 
-All services MUST follow consistent:
+All Foundation APIs MUST follow consistent:
 
-- URI naming conventions  
-- Error model  
-- Pagination format  
-- Versioning strategy  
+- URI structure
+- Error format
+- Pagination rules
+- Versioning strategy
+- Authentication model
 
-Uniformity reduces integration complexity and operational friction.
+Uniformity reduces integration cost and operational complexity.
 
 ---
 
@@ -108,10 +113,9 @@ Uniformity reduces integration complexity and operational friction.
 Clients must not be aware of infrastructure layers.
 
 APIs must not expose:
-
-- Internal hostnames  
-- Network topology  
-- Internal service identifiers  
+- Internal hostnames
+- Network topology
+- Internal service identifiers
 
 ---
 
@@ -122,23 +126,22 @@ APIs must not expose:
 A resource represents a stable business concept.
 
 It is NOT:
-
-- A database table  
-- A service method  
-- An internal entity  
+- A database table
+- A service method
+- An internal entity
 
 Example:
 
 Internal domain:
-- OrderEntity  
-- PricingEngine  
-- RiskEvaluation  
+- OrderEntity
+- PricingEngine
+- RiskEvaluation
 
 External API:
-- Order  
-- Payment  
+- Order
+- Payment
 
-Never expose internal domain structures directly.
+Internal domain models MUST NOT be exposed directly.
 
 ---
 
@@ -146,12 +149,12 @@ Never expose internal domain structures directly.
 
 APIs MUST:
 
-- Use plural nouns  
-- Use lowercase  
-- Use hyphen-separated names  
-- Include version prefix  
-- Avoid verbs  
-- Avoid nesting deeper than 3 levels  
+- Use plural nouns
+- Use lowercase
+- Use hyphen-separated words
+- Include version prefix
+- Avoid verbs
+- Avoid nesting deeper than 3 levels
 
 Correct examples:
 
@@ -174,9 +177,9 @@ POST /processPayment
 
 Identifiers MUST be:
 
-- Opaque  
-- Immutable  
-- Globally unique  
+- Opaque
+- Immutable
+- Globally unique
 
 Use UUID:
 
@@ -193,78 +196,63 @@ Never expose auto-increment database IDs.
 ## 2.4 HTTP Method Semantics
 
 ### GET
-- Must not modify state  
-- Must be idempotent  
-- Returns 200 or 404  
+- Must not modify state
+- Must be idempotent
+- Returns 200 or 404
 
 ### POST
-- Creates resource  
-- Returns 201  
-- Must include Location header  
+- Creates resource
+- Returns 201
+- Must include Location header
 
 ### PUT
-- Full replacement  
-- Idempotent  
+- Full replacement
+- Idempotent
 
 ### PATCH
-- Partial update  
-- Idempotent  
+- Partial update
+- Idempotent
 
 ### DELETE
-- Idempotent  
-- Returns 204 or 200  
+- Idempotent
+- Returns 204 or 200
 
 ---
 
-## 2.5 Orders API Example
+## 2.5 Idempotency for Critical Operations
 
-### Create Order
+Required for:
+- Payments
+- Financial operations
+- Order submission
 
-```
-POST /api/v1/orders
-```
-
-Headers:
-
-```
-Authorization: Bearer <JWT>
-Content-Type: application/json
-Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
-```
-
-Request body:
-
-```json
-{
-  "customerId": "CUST-123",
-  "amount": 150.50,
-  "currency": "EUR"
-}
-```
-
-Response:
+Client must send:
 
 ```
-201 Created
-Location: /api/v1/orders/9c4b6c7e-0d4e-4b5b-a7f0-92d9e5f1c222
+Idempotency-Key: <UUID>
 ```
 
-Response body:
+Example table:
 
-```json
-{
-  "id": "9c4b6c7e-0d4e-4b5b-a7f0-92d9e5f1c222",
-  "customerId": "CUST-123",
-  "amount": 150.50,
-  "currency": "EUR",
-  "status": "CREATED",
-  "createdAt": "2026-02-19T10:00:00Z"
-}
+```sql
+CREATE TABLE idempotency_keys (
+  key VARCHAR(100) PRIMARY KEY,
+  request_hash VARCHAR(255),
+  response_payload TEXT,
+  created_at TIMESTAMP
+);
 ```
+
+The service MUST:
+- Store the key
+- Store the response
+- Return stored response if duplicate request detected
 
 ---
 
 ## 2.6 Standard Error Model
+
+All APIs MUST return a consistent error structure:
 
 ```json
 {
@@ -280,6 +268,8 @@ Response body:
   ]
 }
 ```
+
+Stack traces MUST NOT be exposed.
 
 ---
 
@@ -303,25 +293,24 @@ spring.datasource.hikari.connection-timeout=3000
 ```
 
 Without timeouts:
+- Threads block indefinitely
+- Thread pool saturation occurs
+- Cascading failure becomes likely
 
-- Thread blocking  
-- Pool exhaustion  
-- Cascading failure  
+Timeout values must be shorter than gateway timeouts.
 
 ---
 
 ## 3.2 Retry Policy
 
 Retries are allowed only for:
-
-- Network failures  
-- HTTP 5xx responses  
+- Network failures
+- HTTP 5xx responses
 
 Retries are forbidden for:
-
-- 4xx responses  
-- Validation errors  
-- Non-idempotent POST operations  
+- 4xx responses
+- Validation errors
+- Non-idempotent operations
 
 Example:
 
@@ -329,11 +318,13 @@ Example:
 @Retry(name = "externalService")
 ```
 
+Retries MUST use exponential backoff to prevent retry storms.
+
 ---
 
 ## 3.3 Circuit Breaker
 
-Circuit breakers prevent cascading failures.
+Circuit breakers prevent repeated calls to failing dependencies.
 
 Example:
 
@@ -341,17 +332,38 @@ Example:
 @CircuitBreaker(name = "externalService")
 ```
 
+Without circuit breaker:
+- Downstream failures propagate
+- Threads remain blocked
+- Service capacity collapses
+
 ---
 
-## 3.4 Rate Limiting
+## 3.4 Bulkhead Isolation
 
-Services must return:
+Separate thread pools must be used for:
+
+- External HTTP calls
+- Asynchronous background jobs
+
+This prevents one dependency from consuming all available threads.
+
+---
+
+## 3.5 Rate Limiting
+
+Services MUST return:
 
 ```
 429 Too Many Requests
 ```
 
-When limits are exceeded.
+When request rate exceeds defined limits.
+
+Rate limiting protects against:
+- Traffic spikes
+- Abuse
+- Accidental overload
 
 ---
 
@@ -359,15 +371,17 @@ When limits are exceeded.
 
 ## 4.1 Performance Targets
 
-- Internal P95 latency < 200ms  
-- External P95 latency < 400ms  
-- Error rate < 1%  
+- Internal P95 latency < 200ms
+- External P95 latency < 400ms
+- Error rate < 1%
+
+These targets must be monitored continuously.
 
 ---
 
 ## 4.2 Concurrency Handling
 
-Tomcat configuration:
+Tomcat configuration example:
 
 ```yaml
 server.tomcat.threads.max=200
@@ -385,18 +399,52 @@ Rule:
 Tomcat threads ≤ 4 × DB pool
 ```
 
+Misalignment leads to thread starvation and latency amplification.
+
 ---
 
-## 4.3 Async for Long Operations
+## 4.3 Avoid Long Running Synchronous Requests
 
 Requests longer than 3 seconds MUST be asynchronous.
 
 Pattern:
 
 ```
-POST /reports  →  202 Accepted  
-GET  /reports/{id}  →  status  
+POST /reports  →  202 Accepted
+GET  /reports/{id}  →  status
 ```
+
+Long blocking operations consume valuable threads and reduce throughput.
+
+---
+
+## 4.4 N+1 Query Prevention
+
+Avoid patterns like:
+
+```java
+orders.forEach(o -> o.getItems());
+```
+
+Use fetch joins:
+
+```java
+@Query("SELECT o FROM Order o JOIN FETCH o.items WHERE o.id = :id")
+```
+
+---
+
+## 4.5 Caching
+
+Use distributed cache (Redis) or local cache (Caffeine).
+
+Example:
+
+```java
+@Cacheable("orders")
+```
+
+Cache TTL must be explicitly defined.
 
 ---
 
@@ -413,11 +461,12 @@ spring.security.oauth2.resourceserver.jwt.issuer-uri=...
 ```
 
 JWT must:
+- Be signed
+- Have expiration
+- Validate issuer
+- Validate audience
 
-- Be signed  
-- Have expiration  
-- Validate issuer  
-- Validate audience  
+Expired or invalid tokens MUST be rejected.
 
 ---
 
@@ -431,18 +480,56 @@ Example:
 @PreAuthorize("hasAuthority('SCOPE_orders:write')")
 ```
 
+Object-level authorization must also validate ownership when applicable.
+
 ---
 
 ## 5.3 Input Validation
 
-All DTOs must use Bean Validation.
+All DTOs MUST use Bean Validation.
+
+Invalid requests MUST be rejected before business logic execution.
 
 ---
 
 ## 5.4 Transport Security
 
-- HTTPS mandatory  
-- TLS 1.2 or higher  
+- HTTPS mandatory
+- TLS 1.2 or higher
+- HSTS recommended
+
+Plain HTTP must not be enabled in production.
+
+---
+
+## 5.5 Secrets Management
+
+Secrets MUST NOT be stored in source code.
+
+Use:
+- Environment variables
+- Secret managers
+- Vault systems
+
+---
+
+## 5.6 Audit Logging
+
+Sensitive operations MUST be auditable.
+
+Example schema:
+
+```sql
+CREATE TABLE audit_log (
+  id UUID PRIMARY KEY,
+  user_id VARCHAR(100),
+  action VARCHAR(100),
+  resource_id VARCHAR(100),
+  timestamp TIMESTAMP
+);
+```
+
+Audit logs must be immutable.
 
 ---
 
@@ -456,35 +543,39 @@ Header:
 X-Correlation-ID
 ```
 
-Must be generated if missing and propagated downstream.
+If missing, it MUST be generated.
+
+It MUST be propagated to downstream services.
 
 ---
 
 ## 6.2 Structured Logging
 
-Logs must include:
+Logs MUST include:
 
-- timestamp  
-- level  
-- service  
-- traceId  
-- spanId  
-- correlationId  
+- timestamp
+- level
+- service
+- traceId
+- spanId
+- correlationId
 
-Sensitive information (tokens, passwords, PII) must never be logged.
+Sensitive information must never be logged.
 
 ---
 
 ## 6.3 Metrics
 
-Micrometer must expose:
+Micrometer MUST expose:
 
-- http.server.requests  
-- latency percentiles  
-- error rate  
-- DB pool usage  
-- thread pool usage  
-- JVM memory metrics  
+- http.server.requests
+- latency percentiles (p50, p95, p99)
+- error rate
+- DB pool usage
+- thread pool usage
+- JVM memory metrics
+
+Metrics must be exported to monitoring systems.
 
 ---
 
@@ -496,7 +587,7 @@ Enable tracing:
 management.tracing.enabled=true
 ```
 
-Trace context must propagate across services.
+Trace context must propagate across service boundaries.
 
 ---
 
@@ -504,5 +595,6 @@ Trace context must propagate across services.
 
 This document defines the REST engineering baseline for the Foundation project.
 
-All APIs must comply.  
-Architectural deviations require review and approval.
+All APIs MUST comply.
+
+Architectural deviations require formal review and approval.
