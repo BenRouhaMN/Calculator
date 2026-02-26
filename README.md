@@ -1,434 +1,146 @@
-Below is the **complete, consolidated, enterprise-grade Exception Management Standard**, rewritten to:
+Below is the **fully rewritten and deepened sections starting from 5**, structured, explicit, pedagogical, and enterprise-grade.
 
-* Start each major section with a numbered heading
-* Clearly explain the difference between Business, Technical, and SystemCritical exceptions at the beginning
-* Provide detailed, production-ready Security section
-* Include full Retry & Resilience
-* Include detailed Transaction & Consistency
-* Include Logging implementation
-* Include Idempotency
-* Include HTTP mapping
-* Include Handling Principles with code examples
-* Be ready to copy into a `.md` file
+You can paste this directly after section 4 in your standard.
 
----
-
-# 1. Introduction
-
-This document defines the official Exception Management Standard for the platform.
-
-It ensures:
-
-* Deterministic failure behavior
-* Transaction integrity
-* Retry safety
-* Observability consistency
-* Security hardening
-* Cross-team uniform implementation
-
-This standard is mandatory for all backend services, REST APIs, async consumers, and scheduled jobs.
-
-Technology baseline:
-Java 17+, Spring Boot 3+, Micrometer, Resilience4j, Logback
-
----
-
-# 2. Exception Taxonomy
-
-## 2.1 Conceptual Model
-
-All failures in the system fall into exactly three categories:
-
-### 2.1.1 BusinessException
-
-Represents domain rule violations.
-
-Characteristics:
-
-* The system behaves correctly.
-* The input or business state is invalid.
-* No infrastructure failure occurred.
-* No retry should be attempted.
-* No system alert required.
-* Usually mapped to HTTP 400 / 404 / 409.
-
-Examples:
-
-* ORDER_NOT_FOUND
-* INSUFFICIENT_BALANCE
-* INVALID_STATUS_TRANSITION
-
-This is a functional failure, not a system failure.
-
----
-
-### 2.1.2 TechnicalException
-
-Represents infrastructure or dependency instability.
-
-Characteristics:
-
-* The system cannot complete the operation due to infrastructure.
-* May be retryable.
-* May require alert if persistent.
-* Always logged at ERROR level.
-* Mapped to HTTP 503 or 500.
-
-Examples:
-
-* DB_CONNECTION_FAILURE
-* TIMEOUT
-* REMOTE_SERVICE_UNAVAILABLE
-
-This is a system failure, not a business rule issue.
-
----
-
-### 2.1.3 SystemCriticalException
-
-Represents integrity risk or inconsistent state.
-
-Characteristics:
-
-* Data integrity at risk.
-* Partial commit detected.
-* Invariant violation.
-* Immediate escalation required.
-* Never retryable.
-* Always triggers alert.
-* Always rollback.
-
-Examples:
-
-* DATA_CORRUPTION_DETECTED
-* POST_CONDITION_FAILURE
-* TRANSACTION_INCONSISTENT
-
-This is a platform stability risk.
-
----
-
-## 2.2 RuntimeException Design Rationale
-
-All platform exceptions MUST extend RuntimeException.
-
-Reason:
-
-Spring behavior:
-
-* RuntimeException → automatic rollback
-* CheckedException → no rollback
-
-Using checked exceptions would:
-
-* Pollute service signatures
-* Leak infrastructure concerns
-* Break clean architecture
-* Encourage defensive try/catch
-
-Therefore:
-
-All platform exceptions extend RuntimeException.
-
----
-
-## 2.3 Base PlatformException
-
-```java
-public abstract class PlatformException extends RuntimeException {
-
-    private final String errorCode;
-    private final boolean retryable;
-
-    protected PlatformException(String errorCode,
-                                String message,
-                                boolean retryable,
-                                Throwable cause) {
-        super(message, cause);
-        this.errorCode = errorCode;
-        this.retryable = retryable;
-    }
-
-    public String getErrorCode() { return errorCode; }
-    public boolean isRetryable() { return retryable; }
-}
-```
-
----
-
-## 2.4 BusinessException
-
-```java
-public class BusinessException extends PlatformException {
-
-    public BusinessException(String errorCode, String message) {
-        super(errorCode, message, false, null);
-    }
-}
-```
-
----
-
-## 2.5 TechnicalException
-
-```java
-public class TechnicalException extends PlatformException {
-
-    public TechnicalException(String errorCode,
-                              String message,
-                              boolean retryable,
-                              Throwable cause) {
-        super(errorCode, message, retryable, cause);
-    }
-}
-```
-
----
-
-## 2.6 SystemCriticalException
-
-```java
-public class SystemCriticalException extends PlatformException {
-
-    public SystemCriticalException(String errorCode,
-                                   String message,
-                                   Throwable cause) {
-        super(errorCode, message, false, cause);
-    }
-}
-```
-
----
-
-# 3. Exception Handling Principles (Mandatory Rules + Code)
-
-## 3.1 No Silent Failures
-
-❌ Forbidden:
-
-```java
-catch (Exception e) {}
-```
-
-❌ Forbidden:
-
-```java
-catch (Exception e) {
-    log.error("Failure");
-}
-```
-
-Execution continues → inconsistent state.
-
-✅ Required:
-
-```java
-catch (DataAccessException e) {
-    throw new TechnicalException(
-        "DB_WRITE_FAILURE",
-        "Unable to persist order",
-        true,
-        e
-    );
-}
-```
-
----
-
-## 3.2 Preserve Root Cause
-
-❌ Forbidden:
-
-```java
-throw new TechnicalException("DB_ERROR", "Database error", true, null);
-```
-
-✅ Required:
-
-```java
-throw new TechnicalException("DB_ERROR", "Database error", true, e);
-```
-
----
-
-## 3.3 Do Not Use Exceptions for Flow Control
-
-❌ Forbidden:
-
-```java
-try {
-    return repository.findById(id)
-        .orElseThrow(RuntimeException::new);
-} catch (RuntimeException e) {
-    return null;
-}
-```
-
-✅ Required:
-
-```java
-Optional<Order> order = repository.findById(id);
-
-if (order.isEmpty()) {
-    throw new BusinessException("ORDER_NOT_FOUND", "Order not found");
-}
-
-return order.get();
-```
-
----
-
-## 3.4 Controllers Must Not Build Error Responses
-
-❌ Forbidden:
-
-```java
-@GetMapping("/{id}")
-public ResponseEntity<?> get(String id) {
-    try {
-        return ResponseEntity.ok(service.get(id));
-    } catch (Exception e) {
-        return ResponseEntity.status(500).body(e.getMessage());
-    }
-}
-```
-
-✅ Required:
-
-Controller returns domain object only.
-Exception handled centrally.
-
----
-
-## 3.5 Stable Error Codes Mandatory
-
-❌ Forbidden:
-
-```java
-throw new BusinessException("Something went wrong");
-```
-
-✅ Required:
-
-```java
-throw new BusinessException(
-    "ORDER_ALREADY_EXISTS",
-    "Order already exists"
-);
-```
-
----
-
-# 4. HTTP Mapping & API Error Model
-
-## 4.1 Standard Error Response
-
-```java
-public record ErrorResponse(
-        Instant timestamp,
-        String errorCode,
-        String message,
-        boolean retryable,
-        String correlationId
-) {}
-```
-
----
-
-## 4.2 Global Exception Handler
-
-```java
-@RestControllerAdvice
-public class GlobalExceptionHandler {
-
-    @ExceptionHandler(PlatformException.class)
-    public ResponseEntity<ErrorResponse> handlePlatform(PlatformException ex) {
-
-        HttpStatus status;
-
-        if (ex instanceof BusinessException)
-            status = HttpStatus.BAD_REQUEST;
-        else if (ex instanceof TechnicalException)
-            status = ex.isRetryable()
-                    ? HttpStatus.SERVICE_UNAVAILABLE
-                    : HttpStatus.INTERNAL_SERVER_ERROR;
-        else
-            status = HttpStatus.INTERNAL_SERVER_ERROR;
-
-        ErrorResponse response = new ErrorResponse(
-                Instant.now(),
-                ex.getErrorCode(),
-                ex.getMessage(),
-                ex.isRetryable(),
-                MDC.get("correlationId")
-        );
-
-        logException(ex);
-
-        return ResponseEntity.status(status).body(response);
-    }
-}
-```
+All sections are numbered and expanded for clarity and non-expert developers.
 
 ---
 
 # 5. Transaction & Consistency Rules
 
-## 5.1 Rollback Matrix
+This section defines how transactional integrity and system consistency must be guaranteed.
 
-| Exception               | Rollback |
-| ----------------------- | -------- |
-| BusinessException       | No       |
-| TechnicalException      | Yes      |
-| SystemCriticalException | Yes      |
+It applies to:
 
-Override:
+* REST APIs
+* Service layer
+* Async consumers
+* Scheduled jobs
+* Distributed flows
+
+The objective is to prevent:
+
+* Partial commits
+* Duplicate side effects
+* Inconsistent state
+* Hidden data corruption
+* Retry-induced duplication
+
+---
+
+## 5.1 Core Transaction Model
+
+### 5.1.1 Spring Transaction Behavior
+
+In Spring:
+
+* RuntimeException → rollback
+* CheckedException → no rollback
+
+Because all platform exceptions extend RuntimeException, rollback behavior is deterministic.
+
+---
+
+## 5.2 Rollback Policy
+
+### 5.2.1 Default Rollback Matrix
+
+| Exception Type          | Rollback | Rationale              |
+| ----------------------- | -------- | ---------------------- |
+| BusinessException       | No       | No system failure      |
+| TechnicalException      | Yes      | Infrastructure failure |
+| SystemCriticalException | Yes      | Integrity risk         |
+
+---
+
+### 5.2.2 Forcing Rollback on BusinessException
+
+If business logic modifies state before throwing:
 
 ```java
-@Transactional(noRollbackFor = BusinessException.class)
+@Transactional(rollbackFor = BusinessException.class)
+```
+
+This must be justified in code comments.
+
+---
+
+## 5.3 Idempotency (Mandatory for Retryable Flows)
+
+### 5.3.1 Why Idempotency Is Critical
+
+Without idempotency:
+
+* Retry may double-charge
+* Retry may duplicate orders
+* Retry may over-reserve stock
+
+Retry without idempotency is forbidden.
+
+---
+
+### 5.3.2 When Idempotency Is Mandatory
+
+* Retry enabled
+* External dependency involved
+* Payment flows
+* Distributed transactions
+* Event-driven reprocessing
+
+---
+
+### 5.3.3 Idempotency Implementation Pattern
+
+#### Step 1 — Require Idempotency Key
+
+Header:
+
+```
+X-Idempotency-Key
 ```
 
 ---
 
-## 5.2 Idempotency Requirement
-
-Mandatory when:
-
-* Retry enabled
-* External dependency
-* Payment flow
-
-### Header
-
-X-Idempotency-Key
-
-### Entity
+#### Step 2 — Persistence Table
 
 ```java
 @Entity
-@Table(uniqueConstraints = @UniqueConstraint(columnNames = "key"))
+@Table(
+    name = "idempotency_record",
+    uniqueConstraints = @UniqueConstraint(columnNames = "key")
+)
 public class IdempotencyRecord {
 
     @Id @GeneratedValue
     private Long id;
 
+    @Column(nullable = false)
     private String key;
+
+    @Column(nullable = false)
     private String responseHash;
+
+    @Column(nullable = false)
     private Instant createdAt;
 }
 ```
 
-### Service Pattern
+---
+
+#### Step 3 — Service Guard
 
 ```java
 @Transactional
-public PaymentResponse process(String key, PaymentRequest request) {
+public PaymentResponse processPayment(
+        String key,
+        PaymentRequest request) {
 
     Optional<IdempotencyRecord> existing =
             repository.findByKey(key);
 
-    if (existing.isPresent())
-        return reconstruct(existing.get());
+    if (existing.isPresent()) {
+        return reconstructResponse(existing.get());
+    }
 
     PaymentResponse response = executePayment(request);
 
@@ -442,25 +154,39 @@ public PaymentResponse process(String key, PaymentRequest request) {
 }
 ```
 
-Guarantee: safe retry.
+Guarantee:
+
+Multiple identical requests → same logical result.
 
 ---
 
-## 5.3 Partial Commit Policy
+## 5.4 Partial Commit Prevention
 
-Forbidden:
+### 5.4.1 Dangerous Pattern
 
 ```java
-saveToDb();
-callExternal();
+@Transactional
+public void process() {
+    saveOrder();
+    callExternalService();
+}
 ```
 
-Approved:
+If external call fails:
 
-* Saga pattern
-* Outbox pattern
+* DB committed
+* External state inconsistent
 
-Outbox example:
+---
+
+### 5.4.2 Approved Patterns
+
+#### A. Outbox Pattern (Preferred)
+
+1. Save business entity
+2. Save outbox event
+3. Commit transaction
+4. Async publisher sends event
 
 ```java
 @Entity
@@ -475,50 +201,162 @@ public class OutboxEvent {
 }
 ```
 
+Guarantee:
+
+Atomic DB state + event persistence.
+
+---
+
+#### B. Saga Pattern (Distributed Flow)
+
+Each step must define:
+
+* Forward action
+* Compensating action
+
+Example:
+
+1. Reserve inventory
+2. Charge payment
+3. Confirm order
+
+If step 2 fails:
+
+→ Release inventory
+
+---
+
+## 5.5 Consistency Escalation
+
+If post-condition validation fails:
+
+```java
+if (!validateFinalState()) {
+    throw new SystemCriticalException(
+        "POST_CONDITION_FAILURE",
+        "System state inconsistent",
+        null
+    );
+}
+```
+
+SystemCriticalException must:
+
+* Trigger rollback
+* Emit alert
+* Stop further processing
+
+---
+
+## 5.6 Retry & Transaction Interaction
+
+### Forbidden
+
+```java
+@Transactional
+@Retry(name = "externalService")
+public void process() {
+    saveToDb();
+    callExternal();
+}
+```
+
+Retry may re-execute after commit → duplication risk.
+
+---
+
+### Correct Design
+
+Option 1: Move external call outside transaction
+Option 2: Use Outbox pattern
+
+---
+
+## 5.7 Transaction Decision Matrix
+
+| Scenario                    | Required Pattern        |
+| --------------------------- | ----------------------- |
+| Simple DB write             | @Transactional          |
+| DB + external call          | Outbox                  |
+| Multi-service orchestration | Saga                    |
+| Retryable remote call       | Idempotency + Retry     |
+| Integrity violation         | SystemCriticalException |
+
 ---
 
 # 6. Retry & Resilience Policy
 
-Retry allowed ONLY if:
+Retry is a resilience mechanism — not a recovery shortcut.
 
-* TechnicalException
-* retryable=true
-* Idempotent operation
+---
 
-## 6.1 Resilience4j Configuration
+## 6.1 Retry Decision Matrix
+
+| Exception                            | Retry |
+| ------------------------------------ | ----- |
+| BusinessException                    | No    |
+| TechnicalException (retryable=false) | No    |
+| TechnicalException (retryable=true)  | Yes   |
+| SystemCriticalException              | No    |
+
+---
+
+## 6.2 Resilience4j Configuration
 
 ```yaml
 resilience4j:
   retry:
     instances:
-      inventoryService:
+      externalService:
         maxAttempts: 3
         waitDuration: 500ms
         enableExponentialBackoff: true
         exponentialBackoffMultiplier: 2
+
+  circuitbreaker:
+    instances:
+      externalService:
+        slidingWindowSize: 20
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
 ```
 
-## 6.2 Usage
+---
+
+## 6.3 Correct Usage
 
 ```java
-@Retry(name = "inventoryService")
-@CircuitBreaker(name = "inventoryService")
-public Stock reserve(String requestId) {
+@Retry(name = "externalService")
+@CircuitBreaker(name = "externalService")
+public Response callExternal() {
     ...
 }
 ```
 
-Forbidden:
+---
 
-* Retrying BusinessException
-* Retrying non-idempotent payments
+## 6.4 Forbidden Patterns
+
 * Retry inside DB transaction
+* Manual while(true) retry loops
+* Retrying BusinessException
+* Retrying non-idempotent payment calls
 
 ---
 
 # 7. Observability Standard
 
-## 7.1 Logback JSON Configuration
+Observability has three pillars:
+
+* Logging
+* Tracing
+* Metrics
+
+---
+
+## 7.1 Logging (Structured JSON)
+
+### Logback Configuration
 
 ```xml
 <configuration>
@@ -535,20 +373,34 @@ Forbidden:
 
 ---
 
-## 7.2 Correlation Filter
+## 7.2 Logging Rules
+
+| Exception Type          | Log Level |
+| ----------------------- | --------- |
+| BusinessException       | WARN      |
+| TechnicalException      | ERROR     |
+| SystemCriticalException | ERROR     |
+
+Full stacktrace logged internally only.
+
+---
+
+## 7.3 Correlation & Tracing
 
 ```java
 @Component
 public class CorrelationFilter extends OncePerRequestFilter {
 
-    protected void doFilterInternal(HttpServletRequest request,
-                                    HttpServletResponse response,
-                                    FilterChain chain)
+    protected void doFilterInternal(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            FilterChain chain)
             throws ServletException, IOException {
 
         String correlationId =
-                Optional.ofNullable(request.getHeader("X-Correlation-ID"))
-                        .orElse(UUID.randomUUID().toString());
+                Optional.ofNullable(
+                    request.getHeader("X-Correlation-ID"))
+                .orElse(UUID.randomUUID().toString());
 
         MDC.put("correlationId", correlationId);
         response.setHeader("X-Correlation-ID", correlationId);
@@ -559,9 +411,11 @@ public class CorrelationFilter extends OncePerRequestFilter {
 }
 ```
 
+All logs must contain correlationId.
+
 ---
 
-## 7.3 Metrics
+## 7.4 Metrics
 
 ```java
 Counter.builder("exceptions_total")
@@ -571,70 +425,70 @@ Counter.builder("exceptions_total")
        .increment();
 ```
 
-Alert:
+Alerts:
 
-* > 5% error rate
+* Error rate > 5% over 5 minutes
 * Any SystemCriticalException
 
 ---
 
 # 8. Security & Information Exposure Rules
 
-## 8.1 External API Rules
+---
 
-API MUST NOT expose:
+## 8.1 External API Restrictions
+
+Responses MUST NOT expose:
 
 * Stacktrace
 * SQL queries
 * Internal class names
 * Hostnames
-* Infrastructure details
+* Infrastructure topology
 * Sensitive identifiers
 
 ---
 
-## 8.2 Error Message Policy
+## 8.2 Sanitized Error Messages
 
-* Must be client-safe
-* Must not reveal system internals
-* Must not expose raw exception messages
+External error messages must:
 
----
-
-## 8.3 Logging Policy
-
-* Full stacktrace logged internally
-* Never exposed in response
+* Be client-safe
+* Avoid internal system references
+* Avoid database details
 
 ---
 
-## 8.4 Validation Hardening
+## 8.3 Sensitive Data Protection
 
-* All user inputs validated before business logic
-* Reject malformed inputs early
-* Use @Valid and Bean Validation
-
----
-
-## 8.5 Sensitive Data Protection
-
-Logs MUST NOT include:
+Logs MUST NOT contain:
 
 * Passwords
-* Tokens
-* Personal identifiable information (PII)
+* Access tokens
+* Payment card numbers
+* PII
 
-Masking required.
+Mask sensitive values before logging.
+
+---
+
+## 8.4 Validation Enforcement
+
+* Use @Valid for request validation
+* Reject malformed input early
+* Never rely on exception for input validation
 
 ---
 
 # 9. Async / Batch Handling
 
-| Exception               | Behavior              |
-| ----------------------- | --------------------- |
-| BusinessException       | Log WARN, acknowledge |
-| TechnicalException      | Retry with backoff    |
-| SystemCriticalException | Stop consumer, alert  |
+| Exception               | Behavior                      |
+| ----------------------- | ----------------------------- |
+| BusinessException       | Log WARN, acknowledge message |
+| TechnicalException      | Retry with backoff            |
+| SystemCriticalException | Stop consumer, trigger alert  |
+
+Dead-letter queues required for exhausted retries.
 
 ---
 
@@ -642,23 +496,546 @@ Masking required.
 
 PR rejected if:
 
-* Silent catch
-* Controller builds error manually
+* Silent catch exists
+* Controller handles error manually
 * Retry without idempotency
 * Partial commit risk
-* Stacktrace exposed
 * No correlation ID
+* No structured logging
+* Stacktrace exposed in API
 * No metrics emission
 
-Quarterly audit mandatory.
+Quarterly audit required.
 
 ---
 
-This is now a fully structured, numbered, detailed standard ready to be copied and used across teams.
+This is now fully expanded from section 5 onward, structured and clear for non-experts.
 
-If you want, I can now produce:
+If you want, I can now:
 
-* A visual decision tree
-* UML sequence diagrams
-* Static analysis enforcement checklist
-* Architecture governance maturity model
+* Expand sections 1–4 to same depth
+* Provide UML diagrams
+* Provide architecture flow diagrams
+* Convert into version 1.1 enterprise final document
+
+
+Below is the **fully rewritten and deepened sections starting from 5**, structured, explicit, pedagogical, and enterprise-grade.
+
+You can paste this directly after section 4 in your standard.
+
+All sections are numbered and expanded for clarity and non-expert developers.
+
+---
+
+# 5. Transaction & Consistency Rules
+
+This section defines how transactional integrity and system consistency must be guaranteed.
+
+It applies to:
+
+* REST APIs
+* Service layer
+* Async consumers
+* Scheduled jobs
+* Distributed flows
+
+The objective is to prevent:
+
+* Partial commits
+* Duplicate side effects
+* Inconsistent state
+* Hidden data corruption
+* Retry-induced duplication
+
+---
+
+## 5.1 Core Transaction Model
+
+### 5.1.1 Spring Transaction Behavior
+
+In Spring:
+
+* RuntimeException → rollback
+* CheckedException → no rollback
+
+Because all platform exceptions extend RuntimeException, rollback behavior is deterministic.
+
+---
+
+## 5.2 Rollback Policy
+
+### 5.2.1 Default Rollback Matrix
+
+| Exception Type          | Rollback | Rationale              |
+| ----------------------- | -------- | ---------------------- |
+| BusinessException       | No       | No system failure      |
+| TechnicalException      | Yes      | Infrastructure failure |
+| SystemCriticalException | Yes      | Integrity risk         |
+
+---
+
+### 5.2.2 Forcing Rollback on BusinessException
+
+If business logic modifies state before throwing:
+
+```java
+@Transactional(rollbackFor = BusinessException.class)
+```
+
+This must be justified in code comments.
+
+---
+
+## 5.3 Idempotency (Mandatory for Retryable Flows)
+
+### 5.3.1 Why Idempotency Is Critical
+
+Without idempotency:
+
+* Retry may double-charge
+* Retry may duplicate orders
+* Retry may over-reserve stock
+
+Retry without idempotency is forbidden.
+
+---
+
+### 5.3.2 When Idempotency Is Mandatory
+
+* Retry enabled
+* External dependency involved
+* Payment flows
+* Distributed transactions
+* Event-driven reprocessing
+
+---
+
+### 5.3.3 Idempotency Implementation Pattern
+
+#### Step 1 — Require Idempotency Key
+
+Header:
+
+```
+X-Idempotency-Key
+```
+
+---
+
+#### Step 2 — Persistence Table
+
+```java
+@Entity
+@Table(
+    name = "idempotency_record",
+    uniqueConstraints = @UniqueConstraint(columnNames = "key")
+)
+public class IdempotencyRecord {
+
+    @Id @GeneratedValue
+    private Long id;
+
+    @Column(nullable = false)
+    private String key;
+
+    @Column(nullable = false)
+    private String responseHash;
+
+    @Column(nullable = false)
+    private Instant createdAt;
+}
+```
+
+---
+
+#### Step 3 — Service Guard
+
+```java
+@Transactional
+public PaymentResponse processPayment(
+        String key,
+        PaymentRequest request) {
+
+    Optional<IdempotencyRecord> existing =
+            repository.findByKey(key);
+
+    if (existing.isPresent()) {
+        return reconstructResponse(existing.get());
+    }
+
+    PaymentResponse response = executePayment(request);
+
+    repository.save(new IdempotencyRecord(
+            key,
+            hash(response),
+            Instant.now()
+    ));
+
+    return response;
+}
+```
+
+Guarantee:
+
+Multiple identical requests → same logical result.
+
+---
+
+## 5.4 Partial Commit Prevention
+
+### 5.4.1 Dangerous Pattern
+
+```java
+@Transactional
+public void process() {
+    saveOrder();
+    callExternalService();
+}
+```
+
+If external call fails:
+
+* DB committed
+* External state inconsistent
+
+---
+
+### 5.4.2 Approved Patterns
+
+#### A. Outbox Pattern (Preferred)
+
+1. Save business entity
+2. Save outbox event
+3. Commit transaction
+4. Async publisher sends event
+
+```java
+@Entity
+public class OutboxEvent {
+
+    @Id @GeneratedValue
+    private Long id;
+
+    private String aggregateId;
+    private String payload;
+    private boolean processed;
+}
+```
+
+Guarantee:
+
+Atomic DB state + event persistence.
+
+---
+
+#### B. Saga Pattern (Distributed Flow)
+
+Each step must define:
+
+* Forward action
+* Compensating action
+
+Example:
+
+1. Reserve inventory
+2. Charge payment
+3. Confirm order
+
+If step 2 fails:
+
+→ Release inventory
+
+---
+
+## 5.5 Consistency Escalation
+
+If post-condition validation fails:
+
+```java
+if (!validateFinalState()) {
+    throw new SystemCriticalException(
+        "POST_CONDITION_FAILURE",
+        "System state inconsistent",
+        null
+    );
+}
+```
+
+SystemCriticalException must:
+
+* Trigger rollback
+* Emit alert
+* Stop further processing
+
+---
+
+## 5.6 Retry & Transaction Interaction
+
+### Forbidden
+
+```java
+@Transactional
+@Retry(name = "externalService")
+public void process() {
+    saveToDb();
+    callExternal();
+}
+```
+
+Retry may re-execute after commit → duplication risk.
+
+---
+
+### Correct Design
+
+Option 1: Move external call outside transaction
+Option 2: Use Outbox pattern
+
+---
+
+## 5.7 Transaction Decision Matrix
+
+| Scenario                    | Required Pattern        |
+| --------------------------- | ----------------------- |
+| Simple DB write             | @Transactional          |
+| DB + external call          | Outbox                  |
+| Multi-service orchestration | Saga                    |
+| Retryable remote call       | Idempotency + Retry     |
+| Integrity violation         | SystemCriticalException |
+
+---
+
+# 6. Retry & Resilience Policy
+
+Retry is a resilience mechanism — not a recovery shortcut.
+
+---
+
+## 6.1 Retry Decision Matrix
+
+| Exception                            | Retry |
+| ------------------------------------ | ----- |
+| BusinessException                    | No    |
+| TechnicalException (retryable=false) | No    |
+| TechnicalException (retryable=true)  | Yes   |
+| SystemCriticalException              | No    |
+
+---
+
+## 6.2 Resilience4j Configuration
+
+```yaml
+resilience4j:
+  retry:
+    instances:
+      externalService:
+        maxAttempts: 3
+        waitDuration: 500ms
+        enableExponentialBackoff: true
+        exponentialBackoffMultiplier: 2
+
+  circuitbreaker:
+    instances:
+      externalService:
+        slidingWindowSize: 20
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+```
+
+---
+
+## 6.3 Correct Usage
+
+```java
+@Retry(name = "externalService")
+@CircuitBreaker(name = "externalService")
+public Response callExternal() {
+    ...
+}
+```
+
+---
+
+## 6.4 Forbidden Patterns
+
+* Retry inside DB transaction
+* Manual while(true) retry loops
+* Retrying BusinessException
+* Retrying non-idempotent payment calls
+
+---
+
+# 7. Observability Standard
+
+Observability has three pillars:
+
+* Logging
+* Tracing
+* Metrics
+
+---
+
+## 7.1 Logging (Structured JSON)
+
+### Logback Configuration
+
+```xml
+<configuration>
+    <appender name="JSON"
+        class="net.logstash.logback.appender.LogstashConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder"/>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="JSON"/>
+    </root>
+</configuration>
+```
+
+---
+
+## 7.2 Logging Rules
+
+| Exception Type          | Log Level |
+| ----------------------- | --------- |
+| BusinessException       | WARN      |
+| TechnicalException      | ERROR     |
+| SystemCriticalException | ERROR     |
+
+Full stacktrace logged internally only.
+
+---
+
+## 7.3 Correlation & Tracing
+
+```java
+@Component
+public class CorrelationFilter extends OncePerRequestFilter {
+
+    protected void doFilterInternal(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            FilterChain chain)
+            throws ServletException, IOException {
+
+        String correlationId =
+                Optional.ofNullable(
+                    request.getHeader("X-Correlation-ID"))
+                .orElse(UUID.randomUUID().toString());
+
+        MDC.put("correlationId", correlationId);
+        response.setHeader("X-Correlation-ID", correlationId);
+
+        chain.doFilter(request, response);
+        MDC.clear();
+    }
+}
+```
+
+All logs must contain correlationId.
+
+---
+
+## 7.4 Metrics
+
+```java
+Counter.builder("exceptions_total")
+       .tag("type", ex.getClass().getSimpleName())
+       .tag("retryable", String.valueOf(ex.isRetryable()))
+       .register(meterRegistry)
+       .increment();
+```
+
+Alerts:
+
+* Error rate > 5% over 5 minutes
+* Any SystemCriticalException
+
+---
+
+# 8. Security & Information Exposure Rules
+
+---
+
+## 8.1 External API Restrictions
+
+Responses MUST NOT expose:
+
+* Stacktrace
+* SQL queries
+* Internal class names
+* Hostnames
+* Infrastructure topology
+* Sensitive identifiers
+
+---
+
+## 8.2 Sanitized Error Messages
+
+External error messages must:
+
+* Be client-safe
+* Avoid internal system references
+* Avoid database details
+
+---
+
+## 8.3 Sensitive Data Protection
+
+Logs MUST NOT contain:
+
+* Passwords
+* Access tokens
+* Payment card numbers
+* PII
+
+Mask sensitive values before logging.
+
+---
+
+## 8.4 Validation Enforcement
+
+* Use @Valid for request validation
+* Reject malformed input early
+* Never rely on exception for input validation
+
+---
+
+# 9. Async / Batch Handling
+
+| Exception               | Behavior                      |
+| ----------------------- | ----------------------------- |
+| BusinessException       | Log WARN, acknowledge message |
+| TechnicalException      | Retry with backoff            |
+| SystemCriticalException | Stop consumer, trigger alert  |
+
+Dead-letter queues required for exhausted retries.
+
+---
+
+# 10. Governance & Compliance
+
+PR rejected if:
+
+* Silent catch exists
+* Controller handles error manually
+* Retry without idempotency
+* Partial commit risk
+* No correlation ID
+* No structured logging
+* Stacktrace exposed in API
+* No metrics emission
+
+Quarterly audit required.
+
+---
+
+This is now fully expanded from section 5 onward, structured and clear for non-experts.
+
+If you want, I can now:
+
+* Expand sections 1–4 to same depth
+* Provide UML diagrams
+* Provide architecture flow diagrams
+* Convert into version 1.1 enterprise final document
+
