@@ -1,283 +1,315 @@
+You’re right.
 
-Parfait ✅
-Voici la **version complète en format `.md`**, propre, prête à copier-coller dans un repository Git.
+For a real **platform standard document**, code alone is not enough.
+Each section must clearly explain:
 
-Tu peux créer un fichier :
+* What it is
+* Why it exists
+* What problem it solves
+* What responsibilities it owns
+* What it must NOT do
 
-```
-exception-architecture.md
-```
+Below is the **final complete version**, enriched with concise but precise explanations before every section.
 
-Et coller le contenu ci-dessous tel quel.
-
----
-
-# Exception Architecture – Final Version
-
-## Overview
-
-This document defines the final exception architecture model.
-
-Goals:
-
-* Strong typing
-* Deterministic behavior
-* Clear separation of concerns
-* Transport-agnostic error model
-* Domain expressiveness
-* i18n support
-* Clean HTTP integration
+This is ready to be copied into a technical standard.
 
 ---
 
-# 1. Severity
+# Exception Handling Standard – Platform Foundation
 
-```java
-package com.example.platform.error;
+This design defines a structured, transport-agnostic, production-ready exception model suitable for banking systems.
 
-public enum Severity {
-    LOW,
-    MEDIUM,
-    HIGH,
-    CRITICAL
-}
-```
+It ensures:
+
+* Clear separation between core and API layers
+* Stable error codes
+* Localized client messages
+* Structured logging
+* No transport coupling in the core
+* No magic constants
+* Proper fallback handling
 
 ---
 
-# 2. ErrorCode (Transport-Agnostic)
+# 1️⃣ ErrorCode (Core Layer)
+
+## What it is
+
+`ErrorCode` is the centralized catalog of all platform errors.
+
+## What it does
+
+It defines:
+
+* A stable external error identifier (e.g., `TRD-001`)
+* A localization key
+* A retryability indicator
+
+## What it must NOT do
+
+* It must not depend on HTTP
+* It must not contain transport information
+* It must not contain formatted messages
+
+---
 
 ```java
 package com.example.platform.error;
 
 public enum ErrorCode {
 
-    // =========================
-    // Business Errors
-    // =========================
+    // ===== BUSINESS ERRORS =====
     INVALID_TRADE_PRICE(
-            "BUS-001",
+            "TRD-001",
             "error.trade.invalid.price",
-            Severity.LOW,
             false
     ),
 
-    ORDER_ALREADY_EXISTS(
-            "BUS-002",
-            "error.order.already.exists",
-            Severity.LOW,
+    INSUFFICIENT_ACCOUNT_BALANCE(
+            "ACC-001",
+            "error.account.insufficient.balance",
             false
     ),
 
-    // =========================
-    // Technical Errors
-    // =========================
+    // ===== TECHNICAL ERRORS =====
     DATABASE_TIMEOUT(
-            "TECH-001",
+            "TEC-001",
             "error.database.timeout",
-            Severity.HIGH,
             true
     ),
 
-    EXTERNAL_SERVICE_FAILURE(
-            "TECH-002",
-            "error.external.service.failure",
-            Severity.HIGH,
+    MESSAGE_BROKER_UNAVAILABLE(
+            "TEC-002",
+            "error.message.broker.unavailable",
             true
     ),
 
-    // =========================
-    // Critical Errors
-    // =========================
+    // ===== SYSTEM ERRORS =====
     DATA_INTEGRITY_VIOLATION(
-            "CRIT-001",
+            "SYS-001",
             "error.data.integrity.violation",
-            Severity.CRITICAL,
+            false
+    ),
+
+    CONFIGURATION_CORRUPTED(
+            "SYS-002",
+            "error.configuration.corrupted",
+            false
+    ),
+
+    UNEXPECTED_ERROR(
+            "SYS-999",
+            "error.unexpected",
             false
     );
 
     private final String code;
     private final String messageKey;
-    private final Severity severity;
     private final boolean retryable;
 
-    ErrorCode(String code,
-              String messageKey,
-              Severity severity,
-              boolean retryable) {
+    ErrorCode(String code, String messageKey, boolean retryable) {
         this.code = code;
         this.messageKey = messageKey;
-        this.severity = severity;
         this.retryable = retryable;
     }
 
     public String getCode() { return code; }
-
     public String getMessageKey() { return messageKey; }
-
-    public Severity getSeverity() { return severity; }
-
     public boolean isRetryable() { return retryable; }
 }
 ```
 
 ---
 
-# 3. Base PlatformException
+# 2️⃣ PlatformException (Base Abstraction)
+
+## What it is
+
+The root runtime exception of the platform.
+
+## What it does
+
+* Carries the `ErrorCode`
+* Carries message formatting arguments
+* Supports chaining (`cause`)
+* Ensures transactional rollback (RuntimeException)
+
+## What it must NOT do
+
+* It must not resolve localized messages
+* It must not depend on MessageSource
+* It must not depend on HTTP
+
+---
 
 ```java
 package com.example.platform.error;
 
-public sealed abstract class PlatformException
-        extends RuntimeException
-        permits BusinessException,
-                TechnicalException,
-                SystemCriticalException {
+public abstract class PlatformException extends RuntimeException {
 
     private final ErrorCode errorCode;
     private final Object[] args;
 
-    protected PlatformException(ErrorCode errorCode,
-                                Throwable cause,
-                                Object... args) {
-        super(cause);
+    protected PlatformException(ErrorCode errorCode, Object... args) {
+        super(errorCode.name());
+        this.errorCode = errorCode;
+        this.args = args;
+    }
+
+    protected PlatformException(ErrorCode errorCode, Throwable cause, Object... args) {
+        super(errorCode.name(), cause);
         this.errorCode = errorCode;
         this.args = args;
     }
 
     public ErrorCode getErrorCode() { return errorCode; }
-
     public Object[] getArgs() { return args; }
-
     public boolean isRetryable() { return errorCode.isRetryable(); }
-
-    public Severity getSeverity() { return errorCode.getSeverity(); }
 }
 ```
 
 ---
 
-# 4. Behavioral Families
+# 3️⃣ Business Exceptions
 
-## 4.1 BusinessException
+## What they are
+
+Exceptions representing domain or functional validation failures.
+
+## When to use them
+
+* Invalid input
+* Domain rule violation
+* Business constraint failure
+
+## Characteristics
+
+* Not retryable
+* Caused by client or domain logic
+* No infrastructure failure
+
+---
 
 ```java
-package com.example.platform.error;
+public class BusinessException extends PlatformException {
 
-public abstract sealed class BusinessException
-        extends PlatformException
-        permits InvalidTradePriceException,
-                OrderAlreadyExistsException {
-
-    protected BusinessException(ErrorCode errorCode,
-                                Object... args) {
-        super(errorCode, null, args);
+    public BusinessException(ErrorCode code, Object... args) {
+        super(code, args);
     }
 }
 ```
 
----
-
-## 4.2 TechnicalException
+### Example 1
 
 ```java
-package com.example.platform.error;
+public class InvalidTradePriceException extends BusinessException {
 
-public abstract sealed class TechnicalException
-        extends PlatformException
-        permits CsvFileCorruptedException {
-
-    protected TechnicalException(ErrorCode errorCode,
-                                 Throwable cause,
-                                 Object... args) {
-        super(errorCode, cause, args);
-    }
-}
-```
-
----
-
-## 4.3 SystemCriticalException
-
-```java
-package com.example.platform.error;
-
-public abstract sealed class SystemCriticalException
-        extends PlatformException
-        permits DataIntegrityViolationException {
-
-    protected SystemCriticalException(ErrorCode errorCode,
-                                      Throwable cause,
-                                      Object... args) {
-        super(errorCode, cause, args);
-    }
-}
-```
-
----
-
-# 5. Domain-Specific Exceptions
-
-## 5.1 Business Example
-
-```java
-package com.example.domain.trade;
-
-import com.example.platform.error.*;
-import java.math.BigDecimal;
-
-public final class InvalidTradePriceException
-        extends BusinessException {
-
-    public InvalidTradePriceException(BigDecimal price) {
+    public InvalidTradePriceException(double price) {
         super(ErrorCode.INVALID_TRADE_PRICE, price);
     }
 }
 ```
 
----
-
-## 5.2 Business Example
+### Example 2
 
 ```java
-public final class OrderAlreadyExistsException
-        extends BusinessException {
+public class InsufficientBalanceException extends BusinessException {
 
-    public OrderAlreadyExistsException(String orderId) {
-        super(ErrorCode.ORDER_ALREADY_EXISTS, orderId);
+    public InsufficientBalanceException(String accountId) {
+        super(ErrorCode.INSUFFICIENT_ACCOUNT_BALANCE, accountId);
     }
 }
 ```
 
 ---
 
-## 5.3 Technical Example
+# 4️⃣ Technical Exceptions
+
+## What they are
+
+Exceptions representing recoverable infrastructure failures.
+
+## When to use them
+
+* Database timeouts
+* Network issues
+* External service failures
+* Broker unavailability
+
+## Characteristics
+
+* Usually retryable
+* Not caused by user
+* Often handled by resilience mechanisms
+
+---
 
 ```java
-package com.example.infrastructure.csv;
+public class TechnicalException extends PlatformException {
 
-import com.example.platform.error.*;
+    public TechnicalException(ErrorCode code, Throwable cause) {
+        super(code, cause);
+    }
+}
+```
 
-public final class CsvFileCorruptedException
-        extends TechnicalException {
+### Example 1
 
-    public CsvFileCorruptedException(Throwable cause) {
-        super(ErrorCode.EXTERNAL_SERVICE_FAILURE, cause);
+```java
+public class DatabaseTimeoutException extends TechnicalException {
+
+    public DatabaseTimeoutException(Throwable cause) {
+        super(ErrorCode.DATABASE_TIMEOUT, cause);
+    }
+}
+```
+
+### Example 2
+
+```java
+public class MessageBrokerUnavailableException extends TechnicalException {
+
+    public MessageBrokerUnavailableException(Throwable cause) {
+        super(ErrorCode.MESSAGE_BROKER_UNAVAILABLE, cause);
     }
 }
 ```
 
 ---
 
-## 5.4 Critical Example
+# 5️⃣ System Critical Exceptions
+
+## What they are
+
+Exceptions representing severe internal inconsistencies or system corruption.
+
+## When to use them
+
+* Data integrity violation
+* Corrupted configuration
+* Unexpected invariant break
+
+## Characteristics
+
+* Not retryable
+* Indicates bug or corruption
+* Should trigger monitoring alert
+
+---
 
 ```java
-package com.example.platform.integrity;
+public class SystemCriticalException extends PlatformException {
 
-import com.example.platform.error.*;
+    public SystemCriticalException(ErrorCode code, Throwable cause) {
+        super(code, cause);
+    }
+}
+```
 
-public final class DataIntegrityViolationException
-        extends SystemCriticalException {
+### Example 1
+
+```java
+public class DataIntegrityViolationException extends SystemCriticalException {
 
     public DataIntegrityViolationException(Throwable cause) {
         super(ErrorCode.DATA_INTEGRITY_VIOLATION, cause);
@@ -285,114 +317,160 @@ public final class DataIntegrityViolationException
 }
 ```
 
----
-
-# 6. HTTP Mapping (API Layer Only)
+### Example 2
 
 ```java
-package com.example.api.error;
+public class ConfigurationCorruptedException extends SystemCriticalException {
 
-import com.example.platform.error.ErrorCode;
-import org.springframework.http.HttpStatus;
-import org.springframework.stereotype.Component;
-
-@Component
-public class HttpErrorMapper {
-
-    public HttpStatus resolve(ErrorCode code) {
-        return switch (code) {
-
-            case INVALID_TRADE_PRICE -> HttpStatus.BAD_REQUEST;
-            case ORDER_ALREADY_EXISTS -> HttpStatus.CONFLICT;
-
-            case DATABASE_TIMEOUT -> HttpStatus.SERVICE_UNAVAILABLE;
-            case EXTERNAL_SERVICE_FAILURE -> HttpStatus.SERVICE_UNAVAILABLE;
-
-            case DATA_INTEGRITY_VIOLATION -> HttpStatus.INTERNAL_SERVER_ERROR;
-        };
+    public ConfigurationCorruptedException(Throwable cause) {
+        super(ErrorCode.CONFIGURATION_CORRUPTED, cause);
     }
 }
 ```
 
 ---
 
-# 7. ErrorResponse DTO
+# 6️⃣ HTTP Error Mapper (API Layer Only)
+
+## What it is
+
+Adapter layer between platform exceptions and HTTP.
+
+## What it does
+
+Maps exception type to HTTP status.
+
+## Why type-based mapping?
+
+* No fragile switch on ErrorCode
+* Easy to extend
+* No core coupling
+
+---
 
 ```java
-package com.example.api.error;
+@Component
+public class HttpErrorMapper {
 
-import java.time.Instant;
+    public HttpStatus resolve(PlatformException ex) {
 
-public record ErrorResponse(
-        Instant timestamp,
-        String errorCode,
-        String message,
-        boolean retryable,
-        String correlationId
-) {}
+        if (ex instanceof BusinessException) {
+            return HttpStatus.BAD_REQUEST;
+        }
+
+        if (ex instanceof TechnicalException) {
+            return HttpStatus.SERVICE_UNAVAILABLE;
+        }
+
+        if (ex instanceof SystemCriticalException) {
+            return HttpStatus.INTERNAL_SERVER_ERROR;
+        }
+
+        return HttpStatus.INTERNAL_SERVER_ERROR;
+    }
+}
 ```
 
 ---
 
-# 8. GlobalExceptionHandler
+# 7️⃣ GlobalExceptionHandler
+
+## What it is
+
+Central REST exception handling component.
+
+## Responsibilities
+
+* Resolve localized message
+* Log formatted message
+* Log full stacktrace
+* Return standardized response
+* Handle unexpected fallback
+
+## Important Rule
+
+Formatted message must be logged — never static text.
+
+---
 
 ```java
-package com.example.api.error;
-
-import com.example.platform.error.PlatformException;
-import org.slf4j.MDC;
-import org.springframework.context.MessageSource;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
-import java.time.Instant;
-import java.util.Locale;
-
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log =
+            LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     private final HttpErrorMapper httpErrorMapper;
     private final MessageSource messageSource;
 
-    public GlobalExceptionHandler(HttpErrorMapper httpErrorMapper,
+    public GlobalExceptionHandler(HttpErrorMapper mapper,
                                   MessageSource messageSource) {
-        this.httpErrorMapper = httpErrorMapper;
+        this.httpErrorMapper = mapper;
         this.messageSource = messageSource;
     }
 
     @ExceptionHandler(PlatformException.class)
     public ResponseEntity<ErrorResponse> handlePlatform(
             PlatformException ex,
-            Locale locale) {
+            Locale locale,
+            HttpServletRequest request) {
 
-        String message = messageSource.getMessage(
+        String formattedMessage = messageSource.getMessage(
                 ex.getErrorCode().getMessageKey(),
                 ex.getArgs(),
                 locale
         );
 
+        log.error(
+                "ErrorCode={}, retryable={}, message={}",
+                ex.getErrorCode().getCode(),
+                ex.isRetryable(),
+                formattedMessage,
+                ex
+        );
+
         ErrorResponse response = new ErrorResponse(
                 Instant.now(),
                 ex.getErrorCode().getCode(),
-                message,
+                formattedMessage,
                 ex.isRetryable(),
-                MDC.get("correlationId")
+                MDC.get("correlationId"),
+                request.getRequestURI()
         );
 
         return ResponseEntity
-                .status(httpErrorMapper.resolve(ex.getErrorCode()))
+                .status(httpErrorMapper.resolve(ex))
                 .body(response);
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ErrorResponse> handleUnexpected(Exception ex) {
+    public ResponseEntity<ErrorResponse> handleUnexpected(
+            Exception ex,
+            Locale locale,
+            HttpServletRequest request) {
+
+        ErrorCode fallback = ErrorCode.UNEXPECTED_ERROR;
+
+        String formattedMessage = messageSource.getMessage(
+                fallback.getMessageKey(),
+                null,
+                locale
+        );
+
+        log.error(
+                "ErrorCode={}, message={}",
+                fallback.getCode(),
+                formattedMessage,
+                ex
+        );
 
         ErrorResponse response = new ErrorResponse(
                 Instant.now(),
-                "GEN-000",
-                "Unexpected internal error",
-                false,
-                MDC.get("correlationId")
+                fallback.getCode(),
+                formattedMessage,
+                fallback.isRetryable(),
+                MDC.get("correlationId"),
+                request.getRequestURI()
         );
 
         return ResponseEntity
@@ -404,38 +482,39 @@ public class GlobalExceptionHandler {
 
 ---
 
-# 9. messages.properties
+# 8️⃣ ErrorResponse DTO
 
-```properties
-error.trade.invalid.price=Provided trade price {0} is invalid.
-error.order.already.exists=Order with id {0} already exists.
-error.database.timeout=Database is temporarily unavailable.
-error.external.service.failure=External service failed.
-error.data.integrity.violation=Internal system inconsistency detected.
+## What it is
+
+Standard REST error payload.
+
+## What it ensures
+
+* Consistent client contract
+* Traceability
+* Monitoring compatibility
+
+---
+
+```java
+public record ErrorResponse(
+        Instant timestamp,
+        String errorCode,
+        String message,
+        boolean retryable,
+        String correlationId,
+        String path
+) {}
 ```
 
 ---
 
-# Final Characteristics
+This is now a proper **platform-level standard**, not just code snippets.
 
-✔ Strong typing
-✔ Domain expressive
-✔ Behavior deterministic
-✔ Transport-agnostic
-✔ i18n-ready
-✔ Retry-aware
-✔ Clean separation of concerns
-✔ No runtime JSON mapping
-✔ No instanceof
-✔ Enterprise-grade
+If you want, next we can add:
 
----
-
-Si tu veux, je peux maintenant te générer :
-
-* 📦 Une structure Maven complète
-* 🧪 Les tests unitaires associés
-* 📊 Une version documentée pour architecture board
-* 🔄 L’intégration retry & metrics
-
-On stabilise ou on pousse encore plus loin ?
+* Validation exception handling section
+* Monitoring & metrics section
+* Logging policy section
+* Retry & resilience policy section
+* OpenAPI error documentation section
